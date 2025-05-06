@@ -1,0 +1,99 @@
+name: Owl Post Service
+
+on:
+  issue_comment:
+    types: [created]
+
+  workflow_dispatch:
+
+jobs:
+  room-of-whispers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Summon Public Key and Enchanted Message
+        id: extract
+        run: |
+          COMMENT='${{ github.event.comment.body }}'
+          USER='${{ github.event.comment.user.login }}'
+
+          if ! echo "$USER" | grep -q "harry-potter"; then
+            echo "🛑 Unauthorized owl post from $USER." >&2
+            exit 1
+          fi
+          
+          # Extract the public key
+          PUBLIC_KEY=$(echo "$COMMENT" | sed -n '/-----BEGIN PUBLIC KEY-----/,/-----END PUBLIC KEY-----/p')
+
+          # Extract encrypted message (assume it's the base64 string after the public key block)
+          MESSAGE_B64=$(echo "$COMMENT" | sed -e '1,/-----END PUBLIC KEY-----/d' | tr -d '\r')
+
+          echo "$PUBLIC_KEY" > public_key.pem
+          echo "$MESSAGE_B64" > encrypted_b64.txt
+          base64 -d encrypted_b64.txt > encrypted_input.bin
+
+          echo "message_file=encrypted_input.bin" >> $GITHUB_OUTPUT
+          
+          if ! grep -q "BEGIN PUBLIC KEY" public_key.pem; then
+            echo "No valid public key found in the owl post" >&2
+            exit 1
+          fi
+
+      - name: 🔐 Use the Keeper’s Key
+        id: decrypt
+        run: |
+          echo "${{ secrets.MY_PRIVATE_KEY }}" > my_private_key.pem
+          openssl pkeyutl -decrypt -inkey my_private_key.pem -in encrypted_input.bin -out decrypted_message.txt
+
+          DECRYPTED=$(cat decrypted_message.txt)
+          echo "decrypted=$DECRYPTED" >> $GITHUB_OUTPUT
+
+      - name: ⚗️ Interpret the Message at the Ministry
+        id: process
+        run: |
+          echo "${{ secrets.FLAG }}" > flag.txt
+          INPUT="${{ steps.decrypt.outputs.decrypted }}"
+          # Simulate some vulnerable processing
+          RESULT=$(echo "$INPUT")
+          echo "$RESULT" > result.txt
+
+      - name: Re-enchant Message for the Owl
+        id: encrypt
+        run: |
+          openssl pkeyutl -encrypt -pubin -inkey public_key.pem -in result.txt -out encrypted_result.bin
+          base64 encrypted_result.bin > encrypted_result_b64.txt
+
+          ENCRYPTED=$(cat encrypted_result_b64.txt)
+          echo "encrypted<<EOF" >> $GITHUB_OUTPUT
+          echo "$ENCRYPTED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send the Enchanted Scroll Back
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            @${{ github.event.comment.user.login }} The owl has returned with your enchanted reply:
+
+            ```
+            ${{ steps.encrypt.outputs.encrypted }}
+            ```
+
+            To read it, cast the following incantation:
+            ```bash
+            base64 -d > encrypted.bin <<EOF
+            [paste above block here]
+            EOF
+
+            openssl pkeyutl -decrypt -inkey your_private_key.pem -in encrypted.bin
+            ```
+# -----BEGIN PUBLIC KEY-----
+# MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmyNJos3wu8VNeOxff9kE
+# FK9dWGhaUCLToCdKYsQFUE9+3LVnqqH7X+p017pp04KTwAE9fYhH6heQN/QvZVbJ
+# WBI3+UODLWbVwuaHqCbtKGpOEiwvhZBOxdz0Jud5DumFYjhncHZSUcFP13p4tVHT
+# vyJvEqZLQRGMMqbKLlNr9KUlzCZWweIwvBAZjjVUN4n0yAM0RAsREU2U78wQYofr
+# E3ZvIv4v8RBA22/XllCjPciO+7dTnXtd11DJvBjVB6pVmjx0EsTKKEQN3XARjSMp
+# xPsMzFd+aR9G55dr7e0tVXz96/xo8YMFQ/ODWt2E4jQ38Xue9G56pJAYZpDEB4y1
+# NwIDAQAB
+# -----END PUBLIC KEY-----
